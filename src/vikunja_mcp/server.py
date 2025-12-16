@@ -2072,6 +2072,7 @@ import secrets
 import hashlib
 import base64
 import time
+import json
 import urllib.parse
 
 # In-memory storage for OAuth (use Redis/DB for production multi-instance)
@@ -2210,10 +2211,47 @@ async def oauth_metadata(request: Request):
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/authorize",
         "token_endpoint": f"{base_url}/token",
+        "registration_endpoint": f"{base_url}/register",  # Dynamic Client Registration
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256", "plain"],
+        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
     })
+
+
+# In-memory client registration storage
+_registered_clients = {}
+
+
+@mcp.custom_route("/register", methods=["POST"])
+async def oauth_register(request: Request):
+    """Dynamic Client Registration (RFC 7591)."""
+    body = await request.body()
+    try:
+        client_metadata = json.loads(body.decode()) if body else {}
+    except json.JSONDecodeError:
+        client_metadata = {}
+
+    # Generate client credentials
+    client_id = secrets.token_urlsafe(16)
+    client_secret = secrets.token_urlsafe(32)
+
+    # Store client registration
+    _registered_clients[client_id] = {
+        "client_secret": client_secret,
+        "redirect_uris": client_metadata.get("redirect_uris", []),
+        "client_name": client_metadata.get("client_name", "Unknown"),
+        "created": time.time(),
+    }
+
+    return JSONResponse({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "client_id_issued_at": int(time.time()),
+        "client_secret_expires_at": 0,  # Never expires
+        "redirect_uris": client_metadata.get("redirect_uris", []),
+        "token_endpoint_auth_method": "client_secret_post",
+    }, status_code=201)
 
 
 @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
@@ -2236,7 +2274,7 @@ class OAuthAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate OAuth Bearer tokens."""
 
     # Paths that don't require auth
-    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"}
+    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/register", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"}
 
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
