@@ -2131,9 +2131,13 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        # Add auth middleware for SSE transport
-        mcp.settings.add_middleware(APIKeyAuthMiddleware)
-        mcp.run(transport="sse", host=args.host, port=args.port)
+        import uvicorn
+        from starlette.middleware import Middleware
+
+        # Build app with auth middleware
+        middleware = [Middleware(APIKeyAuthMiddleware)]
+        app = mcp.http_app(transport="sse", middleware=middleware)
+        uvicorn.run(app, host=args.host, port=args.port)
     else:
         mcp.run(show_banner=False)
 
