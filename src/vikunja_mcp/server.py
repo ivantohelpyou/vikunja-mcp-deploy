@@ -2254,17 +2254,26 @@ async def oauth_register(request: Request):
     }, status_code=201)
 
 
-@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
-@mcp.custom_route("/.well-known/protected-resource-metadata", methods=["GET"])
-async def oauth_protected_resource(request: Request):
-    """OAuth2 Protected Resource Metadata (RFC 9728)."""
+def _protected_resource_response(request: Request) -> JSONResponse:
+    """Build protected resource metadata response."""
     base_url = f"{request.url.scheme}://{request.url.netloc}"
-
     return JSONResponse({
         "resource": base_url,
         "authorization_servers": [base_url],
         "bearer_methods_supported": ["header"],
     })
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource(request: Request):
+    """OAuth2 Protected Resource Metadata (legacy path)."""
+    return _protected_resource_response(request)
+
+
+@mcp.custom_route("/.well-known/protected-resource-metadata", methods=["GET"])
+async def protected_resource_metadata(request: Request):
+    """OAuth2 Protected Resource Metadata (RFC 9728)."""
+    return _protected_resource_response(request)
 
 
 # ============================================================================
