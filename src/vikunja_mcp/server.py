@@ -2216,6 +2216,18 @@ async def oauth_metadata(request: Request):
     })
 
 
+@mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+async def oauth_protected_resource(request: Request):
+    """OAuth2 Protected Resource Metadata (RFC 9728)."""
+    base_url = f"{request.url.scheme}://{request.url.netloc}"
+
+    return JSONResponse({
+        "resource": base_url,
+        "authorization_servers": [base_url],
+        "bearer_methods_supported": ["header"],
+    })
+
+
 # ============================================================================
 # OAUTH AUTH MIDDLEWARE
 # ============================================================================
@@ -2224,7 +2236,7 @@ class OAuthAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate OAuth Bearer tokens."""
 
     # Paths that don't require auth
-    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/.well-known/oauth-authorization-server"}
+    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"}
 
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
