@@ -2066,8 +2066,36 @@ def create_from_template(
 # ============================================================================
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse, HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+import secrets
+import hashlib
+import base64
+import time
+import urllib.parse
+
+# In-memory storage for OAuth (use Redis/DB for production multi-instance)
+_oauth_codes = {}  # code -> {client_id, redirect_uri, code_challenge, expires}
+_oauth_tokens = {}  # token -> {client_id, expires}
+
+
+def _generate_code():
+    return secrets.token_urlsafe(32)
+
+
+def _generate_token():
+    return secrets.token_urlsafe(48)
+
+
+def _verify_pkce(code_verifier: str, code_challenge: str, method: str = "S256") -> bool:
+    """Verify PKCE code_verifier against code_challenge."""
+    if method == "S256":
+        digest = hashlib.sha256(code_verifier.encode()).digest()
+        computed = base64.urlsafe_b64encode(digest).rstrip(b'=').decode()
+        return computed == code_challenge
+    elif method == "plain":
+        return code_verifier == code_challenge
+    return False
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -2076,40 +2104,160 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+@mcp.custom_route("/authorize", methods=["GET"])
+async def oauth_authorize(request: Request):
+    """OAuth2 authorization endpoint with PKCE support."""
+    params = request.query_params
+
+    client_id = params.get("client_id")
+    redirect_uri = params.get("redirect_uri")
+    response_type = params.get("response_type")
+    state = params.get("state")
+    code_challenge = params.get("code_challenge")
+    code_challenge_method = params.get("code_challenge_method", "S256")
+
+    # Validate required params
+    if response_type != "code":
+        return JSONResponse({"error": "unsupported_response_type"}, status_code=400)
+
+    if not redirect_uri:
+        return JSONResponse({"error": "invalid_request", "message": "redirect_uri required"}, status_code=400)
+
+    # For single-user setup, auto-approve (user is already authenticated to access this URL)
+    # In a multi-user setup, you'd show a consent screen here
+
+    # Generate authorization code
+    code = _generate_code()
+    _oauth_codes[code] = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "expires": time.time() + 600,  # 10 min expiry
+    }
+
+    # Redirect back with code
+    redirect_params = {"code": code}
+    if state:
+        redirect_params["state"] = state
+
+    redirect_url = f"{redirect_uri}?{urllib.parse.urlencode(redirect_params)}"
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+
+@mcp.custom_route("/token", methods=["POST"])
+async def oauth_token(request: Request):
+    """OAuth2 token endpoint - exchanges auth code for access token."""
+    # Parse form data
+    body = await request.body()
+    params = dict(urllib.parse.parse_qsl(body.decode()))
+
+    grant_type = params.get("grant_type")
+    code = params.get("code")
+    redirect_uri = params.get("redirect_uri")
+    client_id = params.get("client_id")
+    code_verifier = params.get("code_verifier")
+
+    if grant_type != "authorization_code":
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+    # Validate code
+    if code not in _oauth_codes:
+        return JSONResponse({"error": "invalid_grant", "message": "Invalid or expired code"}, status_code=400)
+
+    code_data = _oauth_codes[code]
+
+    # Check expiry
+    if time.time() > code_data["expires"]:
+        del _oauth_codes[code]
+        return JSONResponse({"error": "invalid_grant", "message": "Code expired"}, status_code=400)
+
+    # Verify redirect_uri matches
+    if redirect_uri != code_data["redirect_uri"]:
+        return JSONResponse({"error": "invalid_grant", "message": "redirect_uri mismatch"}, status_code=400)
+
+    # Verify PKCE
+    if code_data["code_challenge"]:
+        if not code_verifier:
+            return JSONResponse({"error": "invalid_grant", "message": "code_verifier required"}, status_code=400)
+        if not _verify_pkce(code_verifier, code_data["code_challenge"], code_data["code_challenge_method"]):
+            return JSONResponse({"error": "invalid_grant", "message": "PKCE verification failed"}, status_code=400)
+
+    # Generate access token
+    access_token = _generate_token()
+    _oauth_tokens[access_token] = {
+        "client_id": client_id,
+        "expires": time.time() + 86400 * 30,  # 30 day expiry
+    }
+
+    # Delete used code
+    del _oauth_codes[code]
+
+    return JSONResponse({
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": 86400 * 30,
+    })
+
+
+@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+async def oauth_metadata(request: Request):
+    """OAuth2 server metadata for auto-discovery."""
+    # Get base URL from request
+    base_url = f"{request.url.scheme}://{request.url.netloc}"
+
+    return JSONResponse({
+        "issuer": base_url,
+        "authorization_endpoint": f"{base_url}/authorize",
+        "token_endpoint": f"{base_url}/token",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256", "plain"],
+    })
+
+
 # ============================================================================
-# API KEY AUTH MIDDLEWARE
+# OAUTH AUTH MIDDLEWARE
 # ============================================================================
 
-class APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """Middleware to validate Bearer token for SSE transport."""
+class OAuthAuthMiddleware(BaseHTTPMiddleware):
+    """Middleware to validate OAuth Bearer tokens."""
 
     # Paths that don't require auth
-    PUBLIC_PATHS = {"/health"}
+    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/.well-known/oauth-authorization-server"}
 
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
 
-        # Check for API key
-        api_key = os.environ.get("MCP_API_KEY")
-
-        # If no API key configured, allow all (backward compatible)
-        if not api_key:
-            return await call_next(request)
-
-        # Validate Bearer token
+        # Check for OAuth token
         auth_header = request.headers.get("Authorization", "")
-        if auth_header == f"Bearer {api_key}":
-            return await call_next(request)
 
-        # Also check query param for SSE clients that can't set headers
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+            # Check if valid OAuth token
+            if token in _oauth_tokens:
+                token_data = _oauth_tokens[token]
+                if time.time() < token_data["expires"]:
+                    return await call_next(request)
+                else:
+                    del _oauth_tokens[token]  # Clean up expired token
+
+            # Also accept MCP_API_KEY for backward compatibility
+            api_key = os.environ.get("MCP_API_KEY")
+            if api_key and token == api_key:
+                return await call_next(request)
+
+        # Check query param fallback
         query_key = request.query_params.get("api_key")
-        if query_key == api_key:
+        api_key = os.environ.get("MCP_API_KEY")
+        if api_key and query_key == api_key:
             return await call_next(request)
 
         return JSONResponse(
-            {"error": "unauthorized", "message": "Invalid or missing API key"},
+            {"error": "unauthorized", "message": "Invalid or missing access token"},
             status_code=401
         )
 
@@ -2134,8 +2282,8 @@ def main():
         import uvicorn
         from starlette.middleware import Middleware
 
-        # Build app with auth middleware
-        middleware = [Middleware(APIKeyAuthMiddleware)]
+        # Build app with OAuth middleware
+        middleware = [Middleware(OAuthAuthMiddleware)]
         app = mcp.http_app(transport="sse", middleware=middleware)
         uvicorn.run(app, host=args.host, port=args.port)
     else:
