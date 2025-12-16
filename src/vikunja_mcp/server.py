@@ -2067,12 +2067,51 @@ def create_from_template(
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint for Render monitoring."""
     return JSONResponse({"status": "ok"})
+
+
+# ============================================================================
+# API KEY AUTH MIDDLEWARE
+# ============================================================================
+
+class APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """Middleware to validate Bearer token for SSE transport."""
+
+    # Paths that don't require auth
+    PUBLIC_PATHS = {"/health"}
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip auth for public paths
+        if request.url.path in self.PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Check for API key
+        api_key = os.environ.get("MCP_API_KEY")
+
+        # If no API key configured, allow all (backward compatible)
+        if not api_key:
+            return await call_next(request)
+
+        # Validate Bearer token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header == f"Bearer {api_key}":
+            return await call_next(request)
+
+        # Also check query param for SSE clients that can't set headers
+        query_key = request.query_params.get("api_key")
+        if query_key == api_key:
+            return await call_next(request)
+
+        return JSONResponse(
+            {"error": "unauthorized", "message": "Invalid or missing API key"},
+            status_code=401
+        )
 
 
 # ============================================================================
@@ -2092,6 +2131,8 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
+        # Add auth middleware for SSE transport
+        mcp.settings.add_middleware(APIKeyAuthMiddleware)
         mcp.run(transport="sse", host=args.host, port=args.port)
     else:
         mcp.run(show_banner=False)
