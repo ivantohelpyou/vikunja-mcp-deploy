@@ -2268,9 +2268,14 @@ class OAuthAuthMiddleware(BaseHTTPMiddleware):
         if api_key and query_key == api_key:
             return await call_next(request)
 
+        # Return 401 with WWW-Authenticate header pointing to OAuth
+        base_url = f"{request.url.scheme}://{request.url.netloc}"
         return JSONResponse(
             {"error": "unauthorized", "message": "Invalid or missing access token"},
-            status_code=401
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer realm="{base_url}", authorization_uri="{base_url}/authorize"'
+            }
         )
 
 
