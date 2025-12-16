@@ -2258,9 +2258,10 @@ def _protected_resource_response(request: Request) -> JSONResponse:
     """Build protected resource metadata response."""
     base_url = f"{request.url.scheme}://{request.url.netloc}"
     return JSONResponse({
-        "resource": base_url,
+        "resource": f"{base_url}/mcp",  # MCP endpoint path
         "authorization_servers": [base_url],
         "bearer_methods_supported": ["header"],
+        "mcp_endpoint": f"{base_url}/mcp",  # Explicit MCP endpoint for clients
     })
 
 
