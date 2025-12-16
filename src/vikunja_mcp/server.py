@@ -2255,6 +2255,7 @@ async def oauth_register(request: Request):
 
 
 @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET"])
+@mcp.custom_route("/.well-known/protected-resource-metadata", methods=["GET"])
 async def oauth_protected_resource(request: Request):
     """OAuth2 Protected Resource Metadata (RFC 9728)."""
     base_url = f"{request.url.scheme}://{request.url.netloc}"
@@ -2274,7 +2275,7 @@ class OAuthAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate OAuth Bearer tokens."""
 
     # Paths that don't require auth
-    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/register", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"}
+    PUBLIC_PATHS = {"/health", "/authorize", "/token", "/register", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/protected-resource-metadata"}
 
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
@@ -2306,13 +2307,13 @@ class OAuthAuthMiddleware(BaseHTTPMiddleware):
         if api_key and query_key == api_key:
             return await call_next(request)
 
-        # Return 401 with WWW-Authenticate header pointing to OAuth
+        # Return 401 with WWW-Authenticate header pointing to resource metadata (RFC 9728)
         base_url = f"{request.url.scheme}://{request.url.netloc}"
         return JSONResponse(
             {"error": "unauthorized", "message": "Invalid or missing access token"},
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="{base_url}", authorization_uri="{base_url}/authorize"'
+                "WWW-Authenticate": f'Bearer resource_metadata_uri="{base_url}/.well-known/protected-resource-metadata"'
             }
         )
 
