@@ -1,0 +1,27 @@
+[project]
+name = "vikunja-mcp"
+version = "0.1.0"
+description = "MCP server for Vikunja task management"
+readme = "README.md"
+authors = [
+    { name = "Ivan Schneider", email = "ivan@ivantohelpyou.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.14.0",
+    "python-dateutil>=2.9.0.post0",
+    "pyyaml>=6.0",
+    "requests>=2.32.5",
+]
+
+[project.scripts]
+vikunja-mcp = "vikunja_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

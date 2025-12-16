@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: vikunja-mcp
+    runtime: python
+    buildCommand: pip install .
+    startCommand: vikunja-mcp --transport sse --port $PORT
+    disk:
+      name: vikunja-mcp-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: VIKUNJA_URL
+        sync: false
+      - key: VIKUNJA_TOKEN
+        sync: false
+      - key: VIKUNJA_MCP_CONFIG_DIR
+        value: /data
+    healthCheckPath: /health
