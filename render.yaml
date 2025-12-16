@@ -3,7 +3,7 @@ services:
     name: vikunja-mcp
     runtime: python
     buildCommand: pip install .
-    startCommand: vikunja-mcp --transport streamable-http --port $PORT
+    startCommand: vikunja-mcp --transport http --port $PORT
     disk:
       name: vikunja-mcp-data
       mountPath: /data
