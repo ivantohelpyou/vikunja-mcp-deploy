@@ -26,10 +26,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import markdown
 import yaml
 from fastmcp import FastMCP
 from pydantic import Field
 import requests
+
+
+def md_to_html(text: str) -> str:
+    """Convert markdown to HTML for Vikunja descriptions."""
+    if not text:
+        return text
+    return markdown.markdown(text)
 
 
 # ============================================================================
@@ -379,7 +387,7 @@ def _get_task_impl(task_id: int) -> dict:
 def _create_task_impl(project_id: int, title: str, description: str = "", start_date: str = "", end_date: str = "", due_date: str = "", priority: int = 0) -> dict:
     data = {"title": title}
     if description:
-        data["description"] = description
+        data["description"] = md_to_html(description)
     if start_date:
         data["start_date"] = start_date
     if end_date:
@@ -400,7 +408,7 @@ def _update_task_impl(task_id: int, title: str = "", description: str = "", star
     if title:
         current["title"] = title
     if description:
-        current["description"] = description
+        current["description"] = md_to_html(description)
     if start_date:
         current["start_date"] = start_date
     if end_date:
