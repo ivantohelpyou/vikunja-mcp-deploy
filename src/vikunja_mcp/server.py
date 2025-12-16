@@ -2325,7 +2325,7 @@ def main():
     """Run the MCP server."""
     import argparse
     parser = argparse.ArgumentParser(description="Vikunja MCP Server")
-    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse"],
+    parser.add_argument("--transport", default="stdio", choices=["stdio", "sse", "streamable-http"],
                         help="Transport protocol (default: stdio)")
     parser.add_argument("--port", type=int, default=8000,
                         help="Port for SSE transport (default: 8000)")
@@ -2333,13 +2333,13 @@ def main():
                         help="Host for SSE transport (default: 0.0.0.0)")
     args = parser.parse_args()
 
-    if args.transport == "sse":
+    if args.transport in ("sse", "streamable-http"):
         import uvicorn
         from starlette.middleware import Middleware
 
         # Build app with OAuth middleware
         middleware = [Middleware(OAuthAuthMiddleware)]
-        app = mcp.http_app(transport="sse", middleware=middleware)
+        app = mcp.http_app(transport=args.transport, middleware=middleware)
         uvicorn.run(app, host=args.host, port=args.port)
     else:
         mcp.run(show_banner=False)
